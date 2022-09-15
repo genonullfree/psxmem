@@ -13,5 +13,4 @@ pub enum MCError {
 
     #[error("Error in conversion of oct_to_dev")]
     Utf8Error(#[from] Utf8Error),
-
 }

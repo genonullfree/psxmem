@@ -1,5 +1,5 @@
-use std::io::{Read, BufReader};
 use std::fs::File;
+use std::io::{BufReader, Read};
 
 use deku::prelude::*;
 
@@ -16,6 +16,19 @@ pub struct Header {
     unused: [u8; 125],
     checksum: u8,
 }
+
+impl Header {
+    fn read<T: std::io::Read>(mut input: T) -> Result<Self, MCError> {
+        let mut i = vec![0u8; FRAME];
+        input.read_exact(&mut i)?;
+
+        let (_, header) = Self::from_bytes((&i, 0))?;
+
+        // TODO validate
+        Ok(header)
+    }
+}
+
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq)]
 #[deku(endian = "little")]
 pub struct DirectoryFrame {
@@ -23,8 +36,29 @@ pub struct DirectoryFrame {
     filesize: u32,
     next_block: u16,
     filename: [u8; 21],
-    pad: [u8; 95],
+    pad: [u8; 96],
     checksum: u8,
+}
+
+impl DirectoryFrame {
+    fn read<T: std::io::Read>(mut input: T) -> Result<Self, MCError> {
+        let mut i = vec![0u8; FRAME];
+        input.read_exact(&mut i)?;
+
+        let (_, df) = Self::from_bytes((&i, 0))?;
+
+        // TODO validate?
+        Ok(df)
+    }
+
+    fn read_all<T: std::io::Read + std::marker::Copy>(mut input: T) -> Result<Vec<Self>, MCError> {
+        let mut df = Vec::<Self>::new();
+        for _ in [0..16] {
+            df.push(DirectoryFrame::read(input)?);
+        }
+
+        Ok(df)
+    }
 }
 
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq)]
@@ -59,14 +93,16 @@ impl MemCard {
     pub fn open(filename: String) -> Result<(), MCError> {
         let file = File::open(&filename)?;
         let mut reader = BufReader::new(file);
-        let mut h = vec![0u8; 128];
-        reader.read_exact(&mut h)?;
-        let (_, header) = Header::from_bytes((&h, 0)).unwrap();
+
+        let header = Header::read(&mut reader)?;
         println!("{:?}", header);
+
+        let df = DirectoryFrame::read_all(&mut reader)?;
+        println!("{:?}", df);
+
         Ok(())
     }
 }
-
 
 pub fn add(left: usize, right: usize) -> usize {
     left + right
