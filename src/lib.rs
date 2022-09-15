@@ -71,6 +71,29 @@ pub struct BrokenFrame {
     checksum: u8,
 }
 
+impl BrokenFrame {
+    fn read<T: std::io::Read>(mut input: T) -> Result<Self, MCError> {
+        let mut i = vec![0u8; FRAME];
+        input.read_exact(&mut i)?;
+
+        let (_, df) = Self::from_bytes((&i, 0))?;
+
+        // TODO validate?
+        Ok(df)
+    }
+
+    fn read_all<T: std::io::Read>(mut input: T) -> Result<Vec<Self>, MCError> {
+        let mut df = Vec::<Self>::new();
+        for _ in 0..19 {
+            let mut v = vec![0u8; FRAME];
+            input.read_exact(&mut v)?;
+            df.push(BrokenFrame::read(&*v)?);
+        }
+
+        Ok(df)
+    }
+}
+
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct Block {
@@ -101,7 +124,12 @@ impl MemCard {
 
         let df = DirectoryFrame::read_all(&mut reader)?;
         for (i, d) in df.iter().enumerate() {
-            println!("{} => {:?}", i, d);
+            println!("DirectoryFrame{} => {:?}", i, d);
+        }
+
+        let bf = BrokenFrame::read_all(&mut reader)?;
+        for (i, b) in bf.iter().enumerate() {
+            println!("BrokenFrame{} => {:?}", i, b);
         }
 
         Ok(())
