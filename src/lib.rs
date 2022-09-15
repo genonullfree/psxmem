@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::BufReader;
 
 use deku::prelude::*;
 
@@ -9,7 +9,7 @@ use crate::errors::MCError;
 const BLOCK: usize = 0x2000;
 const FRAME: usize = 0x80;
 
-#[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq)]
+#[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct Header {
     id: [u8; 2],
@@ -29,7 +29,7 @@ impl Header {
     }
 }
 
-#[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq)]
+#[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct DirectoryFrame {
     state: u32,
@@ -51,17 +51,19 @@ impl DirectoryFrame {
         Ok(df)
     }
 
-    fn read_all<T: std::io::Read + std::marker::Copy>(mut input: T) -> Result<Vec<Self>, MCError> {
+    fn read_all<T: std::io::Read>(mut input: T) -> Result<Vec<Self>, MCError> {
         let mut df = Vec::<Self>::new();
-        for _ in [0..16] {
-            df.push(DirectoryFrame::read(input)?);
+        for _ in 0..15 {
+            let mut v = vec![0u8; FRAME];
+            input.read_exact(&mut v)?;
+            df.push(DirectoryFrame::read(&*v)?);
         }
 
         Ok(df)
     }
 }
 
-#[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq)]
+#[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct BrokenFrame {
     broken_frame: u32,
@@ -69,13 +71,13 @@ pub struct BrokenFrame {
     checksum: u8,
 }
 
-#[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq)]
+#[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct Block {
     data: [u8; BLOCK],
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemCard {
     header: Header,
     //#[deku(len = 15)]
@@ -98,7 +100,9 @@ impl MemCard {
         println!("{:?}", header);
 
         let df = DirectoryFrame::read_all(&mut reader)?;
-        println!("{:?}", df);
+        for (i, d) in df.iter().enumerate() {
+            println!("{} => {:?}", i, d);
+        }
 
         Ok(())
     }
