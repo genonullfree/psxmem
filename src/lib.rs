@@ -23,9 +23,10 @@ impl Header {
         let mut i = vec![0u8; FRAME];
         input.read_exact(&mut i)?;
 
+        validate_checksum(&i)?;
+
         let (_, h) = Self::from_bytes((&i, 0))?;
 
-        // TODO validate
         Ok(h)
     }
 }
@@ -46,9 +47,10 @@ impl DirectoryFrame {
         let mut i = vec![0u8; FRAME];
         input.read_exact(&mut i)?;
 
+        validate_checksum(&i)?;
+
         let (_, f) = Self::from_bytes((&i, 0))?;
 
-        // TODO validate?
         Ok(f)
     }
 
@@ -91,9 +93,10 @@ impl BrokenFrame {
         let mut i = vec![0u8; FRAME];
         input.read_exact(&mut i)?;
 
+        validate_checksum(&i)?;
+
         let (_, f) = Self::from_bytes((&i, 0))?;
 
-        // TODO validate?
         Ok(f)
     }
 
@@ -305,6 +308,23 @@ impl MemCard {
         */
         Ok(())
     }
+}
+
+pub fn calc_checksum(d: &[u8]) -> u8 {
+    let mut c = 0;
+    for i in d.iter().take(FRAME - 1) {
+        c ^= *i;
+    }
+    c
+}
+
+pub fn validate_checksum(d: &[u8]) -> Result<(), MCError> {
+    let c = calc_checksum(d);
+    if c != d[FRAME - 1] {
+        return Err(MCError::BadChecksum);
+    }
+
+    Ok(())
 }
 
 pub fn add(left: usize, right: usize) -> usize {
