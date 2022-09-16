@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::BufReader;
+use std::{fmt, str};
 
 use deku::prelude::*;
 
@@ -60,6 +61,20 @@ impl DirectoryFrame {
         }
 
         Ok(f)
+    }
+}
+
+impl fmt::Display for DirectoryFrame {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let name = match str::from_utf8(&self.filename) {
+            Ok(s) => s.to_string(),
+            Err(_) => "Unknown".to_string(),
+        };
+        write!(
+            f,
+            "\n State: {}\n Filesize: {}\n Next block: {}\n Filename: {}\n Checksum: {}",
+            self.state, self.filesize, self.next_block, name, self.checksum
+        )
     }
 }
 
@@ -185,7 +200,57 @@ impl TitleFrame {
 
         Ok(f)
     }
+
+    fn shift_jis_decode(self) -> Result<String, MCError> {
+        let mut s = String::new();
+
+        let mut p = 0;
+        loop {
+            match self.title[p] {
+                // TODO: This does not match punctuation marks [0x81, 0x43..0x97]
+                0x81 => {
+                    if self.title[p + 1] == 0x40 {
+                        s.push(' ');
+                    }
+                }
+                0x82 => {
+                    if (self.title[p + 1] >= 0x4f && self.title[p + 1] <= 0x58)
+                        || (self.title[p + 1] >= 0x60 && self.title[p + 1] <= 0x79)
+                    {
+                        // Translate 0..9 and A..Z
+                        s.push((self.title[p + 1] - 0x1f) as char);
+                    } else if self.title[p + 1] >= 0x81 && self.title[p + 1] <= 0x9a {
+                        // Translate a..z
+                        s.push((self.title[p + 1] - 0x20) as char);
+                    }
+                }
+                0x00 => break,
+                _ => (),
+            }
+            p += 2;
+            if p >= self.title.len() {
+                break;
+            }
+        }
+
+        Ok(s)
+    }
 }
+
+impl fmt::Display for TitleFrame {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let name = match self.shift_jis_decode() {
+            Ok(s) => s,
+            Err(_) => "Unknown".to_string(),
+        };
+        write!(
+            f,
+            "\n Display: {}\n Block Number: {}\n Filename: {}",
+            self.display, self.block_num, name
+        )
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemCard {
     header: Header,
@@ -197,7 +262,7 @@ pub struct MemCard {
     unused_frames: Vec<Frame>,
     wr_test_frame: Header,
     //#[deku(len = 15)]
-    //    blocks: Vec<Block>,
+    blocks: Vec<Block>,
 }
 
 impl MemCard {
@@ -210,34 +275,34 @@ impl MemCard {
 
         let df = DirectoryFrame::read_all(&mut reader)?;
         for (i, d) in df.iter().enumerate() {
-            println!("DirectoryFrame{} => {:?}", i, d);
+            println!("DirectoryFrame{} => {}", i, d);
         }
 
         let bf = BrokenFrame::read_all(&mut reader)?;
         for (i, b) in bf.iter().enumerate() {
-            println!("BrokenFrame{} => {:?}", i, b);
+            //println!("BrokenFrame{} => {:?}", i, b);
         }
 
         let uf = Frame::read_unused(&mut reader)?;
         for (i, u) in uf.iter().enumerate() {
-            println!("UnusedFrame{} => {:?}", i, u);
+            //println!("UnusedFrame{} => {:?}", i, u);
         }
 
-        let wtheader = Header::read(&mut reader)?;
-        println!("{:?}", wtheader);
+        let wr_test_frame = Header::read(&mut reader)?;
+        //println!("{:?}", wtheader);
 
         let blocks = Block::read_all(&mut reader)?;
         for (i, b) in blocks.iter().enumerate() {
-            println!("Block{} => {:?}", i, b);
+            //println!("Block{} => {:?}", i, b);
         }
         /*
-        let tf = TitleFrame::read_n(&mut reader, 40)?;
+        let tf = TitleFrame::read_n(&mut reader, 400)?;
         for (i, t) in tf.iter().enumerate() {
             if t.id == SAVE_MAGIC {
-                println!("TitleFrame{}: {:?}", i, t);
+                println!("TitleFrame{}: {}", i, t);
             }
-        }*/
-
+        }
+        */
         Ok(())
     }
 }
