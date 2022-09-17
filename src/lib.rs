@@ -150,7 +150,7 @@ pub struct TitleFrame {
     block_num: u8,
     title: [u8; 64],
     reserved: [u8; 28],
-    icon_palette: [u8; 16],
+    icon_palette: [u16; 16],
 }
 
 impl TitleFrame {
