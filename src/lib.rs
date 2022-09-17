@@ -108,6 +108,9 @@ impl DataBlock {
         println!("{}", title_frame);
 
         let icon_frames = DataBlock::read_icon_frames(&b.data[FRAME..])?;
+        for (i, f) in icon_frames.iter().enumerate() {
+            println!("IF{} => {:02x?}", i, f);
+        }
 
         Ok(DataBlock {
             title_frame,
@@ -147,7 +150,7 @@ pub struct TitleFrame {
     block_num: u8,
     title: [u8; 64],
     reserved: [u8; 28],
-    icon_palette: [u8; 32],
+    icon_palette: [u8; 16],
 }
 
 impl TitleFrame {
@@ -195,8 +198,8 @@ impl fmt::Display for TitleFrame {
         };
         write!(
             f,
-            "\n Display: {}\n Block Number: {}\n Filename: {}",
-            self.display, self.block_num, name
+            "\n Display: {}\n Block Number: {}\n Filename: {}\nIcon Palette: {:02x?}",
+            self.display, self.block_num, name, self.icon_palette
         )
     }
 }
