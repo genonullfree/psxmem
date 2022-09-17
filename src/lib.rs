@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::BufReader;
+use std::io::Read;
 use std::{fmt, str};
 
 use deku::prelude::*;
@@ -18,19 +18,6 @@ pub struct Header {
     checksum: u8,
 }
 
-impl Header {
-    fn read<T: std::io::Read>(mut input: T) -> Result<Self, MCError> {
-        let mut i = vec![0u8; FRAME];
-        input.read_exact(&mut i)?;
-
-        validate_checksum(&i)?;
-
-        let (_, h) = Self::from_bytes((&i, 0))?;
-
-        Ok(h)
-    }
-}
-
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct DirectoryFrame {
@@ -43,26 +30,18 @@ pub struct DirectoryFrame {
 }
 
 impl DirectoryFrame {
-    fn read<T: std::io::Read>(mut input: T) -> Result<Self, MCError> {
-        let mut i = vec![0u8; FRAME];
-        input.read_exact(&mut i)?;
-
-        validate_checksum(&i)?;
-
-        let (_, f) = Self::from_bytes((&i, 0))?;
-
-        Ok(f)
-    }
-
-    fn read_all<T: std::io::Read>(mut input: T) -> Result<Vec<Self>, MCError> {
-        let mut f = Vec::<Self>::new();
-        for _ in 0..15 {
-            let mut v = vec![0u8; FRAME];
-            input.read_exact(&mut v)?;
-            f.push(DirectoryFrame::read(&*v)?);
+    fn load(input: &[u8], n: usize) -> Result<Vec<Self>, MCError> {
+        let mut frame = Vec::<Self>::new();
+        let (mut next, mut df) = Self::from_bytes((input, 0))?;
+        frame.push(df);
+        loop {
+            if frame.len() == n {
+                break;
+            }
+            (next, df) = Self::from_bytes(next)?;
+            frame.push(df);
         }
-
-        Ok(f)
+        Ok(frame)
     }
 }
 
@@ -89,26 +68,18 @@ pub struct BrokenFrame {
 }
 
 impl BrokenFrame {
-    fn read<T: std::io::Read>(mut input: T) -> Result<Self, MCError> {
-        let mut i = vec![0u8; FRAME];
-        input.read_exact(&mut i)?;
-
-        validate_checksum(&i)?;
-
-        let (_, f) = Self::from_bytes((&i, 0))?;
-
-        Ok(f)
-    }
-
-    fn read_all<T: std::io::Read>(mut input: T) -> Result<Vec<Self>, MCError> {
-        let mut f = Vec::<Self>::new();
-        for _ in 0..20 {
-            let mut v = vec![0u8; FRAME];
-            input.read_exact(&mut v)?;
-            f.push(BrokenFrame::read(&*v)?);
+    fn load(input: &[u8], n: usize) -> Result<Vec<Self>, MCError> {
+        let mut frame = Vec::<Self>::new();
+        let (mut next, mut df) = Self::from_bytes((input, 0))?;
+        frame.push(df);
+        loop {
+            if frame.len() == n {
+                break;
+            }
+            (next, df) = Self::from_bytes(next)?;
+            frame.push(df);
         }
-
-        Ok(f)
+        Ok(frame)
     }
 }
 
@@ -118,58 +89,55 @@ pub struct Frame {
     data: [u8; FRAME],
 }
 
-impl Frame {
-    fn read<T: std::io::Read>(mut input: T) -> Result<Self, MCError> {
-        let mut i = vec![0u8; FRAME];
-        input.read_exact(&mut i)?;
-
-        let (_, f) = Self::from_bytes((&i, 0))?;
-
-        // TODO validate?
-        Ok(f)
-    }
-
-    fn read_unused<T: std::io::Read>(mut input: T) -> Result<Vec<Self>, MCError> {
-        let mut f = Vec::<Self>::new();
-        for _ in 0..7 {
-            let mut v = vec![0u8; FRAME];
-            input.read_exact(&mut v)?;
-            f.push(Frame::read(&*v)?);
-        }
-
-        Ok(f)
-    }
-}
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct Block {
     data: [u8; BLOCK],
 }
 
-impl Block {
-    fn read<T: std::io::Read>(mut input: T) -> Result<Self, MCError> {
-        let mut i = vec![0u8; BLOCK];
-        input.read_exact(&mut i)?;
-
-        let (_, f) = Self::from_bytes((&i, 0))?;
-
-        // TODO validate?
-        Ok(f)
-    }
-
-    fn read_all<T: std::io::Read>(mut input: T) -> Result<Vec<Self>, MCError> {
-        let mut f = Vec::<Self>::new();
-        for _ in 0..15 {
-            let mut v = vec![0u8; BLOCK];
-            input.read_exact(&mut v)?;
-            f.push(Self::read(&*v)?);
-        }
-
-        Ok(f)
-    }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DataBlock {
+    title_frame: TitleFrame,
+    // len 3
+    icon_frames: Vec<Frame>,
 }
 
-const SAVE_MAGIC: [u8; 2] = [b'S', b'C'];
+impl DataBlock {
+    pub fn load_data_block(b: Block) -> Result<Self, MCError> {
+        let (_, title_frame) = TitleFrame::from_bytes((&b.data, 0))?;
+        println!("{}", title_frame);
+
+        let icon_frames = DataBlock::read_icon_frames(&b.data[FRAME..])?;
+
+        Ok(DataBlock {
+            title_frame,
+            icon_frames,
+        })
+    }
+
+    pub fn load_all_data_blocks(v: &[Block]) -> Result<Vec<Self>, MCError> {
+        let mut out = Vec::<Self>::new();
+        for i in v {
+            out.push(Self::load_data_block(*i)?);
+        }
+
+        Ok(out)
+    }
+
+    fn read_icon_frames(input: &[u8]) -> Result<Vec<Frame>, MCError> {
+        let mut frame = Vec::<Frame>::new();
+        let (mut next, mut f) = Frame::from_bytes((input, 0))?;
+        frame.push(f);
+        loop {
+            if frame.len() == 3 {
+                break;
+            }
+            (next, f) = Frame::from_bytes(next)?;
+            frame.push(f);
+        }
+        Ok(frame)
+    }
+}
 
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
@@ -183,27 +151,6 @@ pub struct TitleFrame {
 }
 
 impl TitleFrame {
-    fn read<T: std::io::Read>(mut input: T) -> Result<Self, MCError> {
-        let mut i = vec![0u8; FRAME];
-        input.read_exact(&mut i)?;
-
-        let (_, f) = Self::from_bytes((&i, 0))?;
-
-        // TODO validate?
-        Ok(f)
-    }
-
-    fn read_n<T: std::io::Read>(mut input: T, n: usize) -> Result<Vec<Self>, MCError> {
-        let mut f = Vec::<Self>::new();
-        for _ in 0..n {
-            let mut v = vec![0u8; FRAME];
-            input.read_exact(&mut v)?;
-            f.push(Self::read(&*v)?);
-        }
-
-        Ok(f)
-    }
-
     fn shift_jis_decode(self) -> Result<String, MCError> {
         let mut s = String::new();
 
@@ -255,57 +202,76 @@ impl fmt::Display for TitleFrame {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MemCard {
+pub struct InfoBlock {
     header: Header,
     //#[deku(len = 15)]
     dir_frames: Vec<DirectoryFrame>,
     //#[deku(len = 20)]
     broken_frames: Vec<BrokenFrame>,
     //#[deku(len = frame*7)]
-    unused_frames: Vec<Frame>,
-    wr_test_frame: Header,
+    //unused_frames: Vec<Frame>,
+    //wr_test_frame: Header,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemCard {
+    info_block: InfoBlock,
     //#[deku(len = 15)]
-    blocks: Vec<Block>,
+    data_blocks: Vec<Block>,
+}
+
+impl InfoBlock {
+    pub fn open(b: Block) -> Result<(), MCError> {
+        //let header = Header::read(&mut reader)?;
+        let (_, header) = Header::from_bytes((&b.data, 0))?;
+        println!("{:?}", header);
+
+        // Read directory frames
+        let dir_frames = DirectoryFrame::load(&b.data[FRAME..], 15)?;
+        for (i, d) in dir_frames.iter().enumerate() {
+            println!("DF{} => {}", i, d);
+        }
+
+        // Read broken frames
+        let broken_frames = BrokenFrame::load(&b.data[FRAME * 16..], 20)?;
+        for (i, d) in broken_frames.iter().enumerate() {
+            println!("BF{} => {:?}", i, d);
+        }
+
+        /*
+                let uf = Frame::read_unused(&mut reader)?;
+                for (i, u) in uf.iter().enumerate() {
+                    //println!("UnusedFrame{} => {:?}", i, u);
+                }
+
+                let wr_test_frame = Header::read(&mut reader)?;
+                //println!("{:?}", wtheader);
+        */
+        Ok(())
+    }
 }
 
 impl MemCard {
     pub fn open(filename: String) -> Result<(), MCError> {
-        let file = File::open(&filename)?;
-        let mut reader = BufReader::new(file);
+        let mut file = File::open(&filename)?;
 
-        let header = Header::read(&mut reader)?;
-        println!("{:?}", header);
+        // Load Info Block
+        let mut block0 = Block { data: [0u8; BLOCK] };
+        file.read_exact(&mut block0.data)?;
+        InfoBlock::open(block0)?;
 
-        let df = DirectoryFrame::read_all(&mut reader)?;
-        for (i, d) in df.iter().enumerate() {
-            println!("DirectoryFrame{} => {}", i, d);
-        }
-
-        let bf = BrokenFrame::read_all(&mut reader)?;
-        for (i, b) in bf.iter().enumerate() {
-            //println!("BrokenFrame{} => {:?}", i, b);
-        }
-
-        let uf = Frame::read_unused(&mut reader)?;
-        for (i, u) in uf.iter().enumerate() {
-            //println!("UnusedFrame{} => {:?}", i, u);
-        }
-
-        let wr_test_frame = Header::read(&mut reader)?;
-        //println!("{:?}", wtheader);
-
-        let blocks = Block::read_all(&mut reader)?;
-        for (i, b) in blocks.iter().enumerate() {
-            //println!("Block{} => {:?}", i, b);
-        }
-        /*
-        let tf = TitleFrame::read_n(&mut reader, 400)?;
-        for (i, t) in tf.iter().enumerate() {
-            if t.id == SAVE_MAGIC {
-                println!("TitleFrame{}: {}", i, t);
+        // Load Data Blocks
+        let mut blocks = Vec::<Block>::new();
+        loop {
+            let mut block = Block { data: [0u8; BLOCK] };
+            file.read_exact(&mut block.data)?;
+            blocks.push(block);
+            if blocks.len() == 15 {
+                break;
             }
         }
-        */
+        let _ = DataBlock::load_all_data_blocks(&blocks)?;
+
         Ok(())
     }
 }
