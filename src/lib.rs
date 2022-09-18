@@ -108,7 +108,7 @@ impl DataBlock {
         let (_, title_frame) = TitleFrame::from_bytes((&b.data, 0))?;
         println!("{}", title_frame);
 
-        let icon_frames = DataBlock::read_icon_frames(&b.data[FRAME..])?;
+        let icon_frames = DataBlock::read_icon_frames(&b.data[FRAME..], title_frame.display)?;
         for (i, f) in icon_frames.iter().enumerate() {
             println!("IF{} => {:02x?}", i, f);
         }
@@ -128,12 +128,13 @@ impl DataBlock {
         Ok(out)
     }
 
-    fn read_icon_frames(input: &[u8]) -> Result<Vec<Frame>, MCError> {
+    fn read_icon_frames(input: &[u8], display_flag: u8) -> Result<Vec<Frame>, MCError> {
         let mut frame = Vec::<Frame>::new();
+        let num_frames = display_flag as usize & 0x03;
         let (mut next, mut f) = Frame::from_bytes((input, 0))?;
         frame.push(f);
         loop {
-            if frame.len() == 3 {
+            if frame.len() == num_frames {
                 break;
             }
             (next, f) = Frame::from_bytes(next)?;
@@ -144,7 +145,7 @@ impl DataBlock {
 
     fn export_images(&self) -> Result<(), MCError> {
         for (n, i) in self.icon_frames.iter().enumerate() {
-            let filename = format!("{}_export_{}.png", self.title_frame.shift_jis_decode()?, n);
+            let filename = format!("{}_frame{}.png", self.title_frame.shift_jis_decode()?, n);
             let file = File::create(filename)?;
             let mut w = BufWriter::new(file);
             let mut enc = Encoder::new(&mut w, 16, 16);
@@ -168,7 +169,7 @@ impl DataBlock {
             for s in 0..2 {
                 let index = (v >> (4 * s as u8)) & 0x0f;
                 let pixel: u16 = self.title_frame.icon_palette[index as usize];
-                // format is abgr
+                // format is abgr, needs to be pushed rgba
                 //
                 // push red
                 rgba.push(((pixel & 0x001f) as u16) as u8 * 8);
@@ -176,7 +177,7 @@ impl DataBlock {
                 rgba.push(((pixel & (0x001f << 5)) as u16 >> 5) as u8 * 8);
                 // push blue
                 rgba.push(((pixel & (0x001f << 10)) as u16 >> 10) as u8 * 8);
-                // push alpha alpha is either 1 or 0, best results are simply ignored
+                // push alpha alpha is either 1 or 0, best results are simply ignored, lol
                 rgba.push(255);
             }
         }
