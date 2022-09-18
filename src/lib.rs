@@ -184,13 +184,14 @@ impl DataBlock {
                 // format is argb
                 //
                 // push blue
-                rgba.push(((pixel & 0x000f) as u16) as u8 * 15);
+                rgba.push(((pixel & 0x001f) as u16) as u8 * 8);
                 // push green
-                rgba.push(((pixel & 0x00f0) as u16 >> 4) as u8 * 15);
+                rgba.push(((pixel & (0x001f << 5)) as u16 >> 5) as u8 * 8);
                 // push red
-                rgba.push(((pixel & 0x0f00) as u16 >> 8) as u8 * 15);
+                rgba.push(((pixel & (0x001f << 10)) as u16 >> 10) as u8 * 8);
                 // push alpha
-                rgba.push(((pixel & 0xf000) as u16 >> 12) as u8 * 15);
+                //rgba.push(((pixel & 0x8000) as u16 >> 16) as u8 * 15);
+                rgba.push(255);
             }
         }
 
