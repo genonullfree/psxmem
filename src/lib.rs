@@ -151,20 +151,6 @@ impl DataBlock {
             enc.set_color(png::ColorType::Rgba);
             enc.set_depth(png::BitDepth::Eight);
 
-            //
-            enc.set_trns(vec![0xFFu8, 0xFFu8, 0xFFu8, 0xFFu8]);
-            enc.set_source_gamma(png::ScaledFloat::from_scaled(45455)); // 1.0 / 2.2, scaled by 100000
-            enc.set_source_gamma(png::ScaledFloat::new(1.0 / 2.2)); // 1.0 / 2.2, unscaled, but rounded
-            let source_chromaticities = png::SourceChromaticities::new(
-                // Using unscaled instantiation here
-                (0.31270, 0.32900),
-                (0.64000, 0.33000),
-                (0.30000, 0.60000),
-                (0.15000, 0.06000),
-            );
-            enc.set_source_chromaticities(source_chromaticities);
-            //
-
             let mut writer = enc.write_header().unwrap();
 
             let pixel_data = self.translate_bmp_to_rgba(i)?;
@@ -177,25 +163,23 @@ impl DataBlock {
     fn translate_bmp_to_rgba(&self, f: &Frame) -> Result<Vec<u8>, MCError> {
         let mut rgba = Vec::<u8>::new();
 
+        // Each byte in the data array is 2x 4bit addresses into the 16x u16 array palette
         for v in f.data {
             for s in 0..2 {
                 let index = (v >> (4 * s as u8)) & 0x0f;
                 let pixel: u16 = self.title_frame.icon_palette[index as usize];
-                // format is argb
+                // format is abgr
                 //
-                // push blue
+                // push red
                 rgba.push(((pixel & 0x001f) as u16) as u8 * 8);
                 // push green
                 rgba.push(((pixel & (0x001f << 5)) as u16 >> 5) as u8 * 8);
-                // push red
+                // push blue
                 rgba.push(((pixel & (0x001f << 10)) as u16 >> 10) as u8 * 8);
-                // push alpha
-                //rgba.push(((pixel & 0x8000) as u16 >> 16) as u8 * 15);
+                // push alpha alpha is either 1 or 0, best results are simply ignored
                 rgba.push(255);
             }
         }
-
-        println!("{:?}", rgba);
 
         Ok(rgba)
     }
