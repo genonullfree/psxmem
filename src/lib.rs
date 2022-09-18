@@ -106,12 +106,8 @@ pub struct DataBlock {
 impl DataBlock {
     pub fn load_data_block(b: Block) -> Result<Self, MCError> {
         let (_, title_frame) = TitleFrame::from_bytes((&b.data, 0))?;
-        println!("{}", title_frame);
 
         let icon_frames = DataBlock::read_icon_frames(&b.data[FRAME..], title_frame.display)?;
-        for (i, f) in icon_frames.iter().enumerate() {
-            println!("IF{} => {:02x?}", i, f);
-        }
 
         Ok(DataBlock {
             title_frame,
@@ -262,50 +258,34 @@ pub struct InfoBlock {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemCard {
-    info_block: InfoBlock,
+    info: InfoBlock,
     //#[deku(len = 15)]
-    data_blocks: Vec<Block>,
+    data: Vec<DataBlock>,
 }
 
 impl InfoBlock {
-    pub fn open(b: Block) -> Result<(), MCError> {
+    pub fn open(b: Block) -> Result<Self, MCError> {
         //let header = Header::read(&mut reader)?;
         let (_, header) = Header::from_bytes((&b.data, 0))?;
-        println!("{:?}", header);
 
         // Read directory frames
         let dir_frames = DirectoryFrame::load(&b.data[FRAME..], 15)?;
-        for (i, d) in dir_frames.iter().enumerate() {
-            println!("DF{} => {}", i, d);
-        }
 
         // Read broken frames
         let broken_frames = BrokenFrame::load(&b.data[FRAME * 16..], 20)?;
-        for (i, d) in broken_frames.iter().enumerate() {
-            println!("BF{} => {:?}", i, d);
-        }
 
-        /*
-                let uf = Frame::read_unused(&mut reader)?;
-                for (i, u) in uf.iter().enumerate() {
-                    //println!("UnusedFrame{} => {:?}", i, u);
-                }
-
-                let wr_test_frame = Header::read(&mut reader)?;
-                //println!("{:?}", wtheader);
-        */
-        Ok(())
+        Ok(InfoBlock{header, dir_frames, broken_frames})
     }
 }
 
 impl MemCard {
-    pub fn open(filename: String) -> Result<(), MCError> {
+    pub fn open(filename: String) -> Result<Self, MCError> {
         let mut file = File::open(&filename)?;
 
         // Load Info Block
         let mut block0 = Block { data: [0u8; BLOCK] };
         file.read_exact(&mut block0.data)?;
-        InfoBlock::open(block0)?;
+        let info = InfoBlock::open(block0)?;
 
         // Load Data Blocks
         let mut blocks = Vec::<Block>::new();
@@ -317,12 +297,9 @@ impl MemCard {
                 break;
             }
         }
-        let db = DataBlock::load_all_data_blocks(&blocks)?;
-        for d in db {
-            d.export_images()?;
-        }
+        let data = DataBlock::load_all_data_blocks(&blocks)?;
 
-        Ok(())
+        Ok(MemCard{info, data})
     }
 }
 
@@ -359,6 +336,11 @@ mod tests {
 
     #[test]
     fn memcard_open() {
-        MemCard::open("epsxe000.mcr".to_string()).unwrap();
+        let m = MemCard::open("epsxe000.mcr".to_string()).unwrap();
+
+        // Export images
+        for d in m.data {
+            d.export_images().unwrap();
+        }
     }
 }
