@@ -1,8 +1,9 @@
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufWriter, Read};
 use std::{fmt, str};
 
 use deku::prelude::*;
+use png::Encoder;
 
 mod errors;
 use crate::errors::MCError;
@@ -140,6 +141,63 @@ impl DataBlock {
         }
         Ok(frame)
     }
+
+    fn export_images(&self) -> Result<(), MCError> {
+        for (n, i) in self.icon_frames.iter().enumerate() {
+            let filename = format!("{}_export_{}.png", self.title_frame.shift_jis_decode()?, n);
+            let file = File::create(filename)?;
+            let mut w = BufWriter::new(file);
+            let mut enc = Encoder::new(&mut w, 16, 16);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+
+            //
+            enc.set_trns(vec![0xFFu8, 0xFFu8, 0xFFu8, 0xFFu8]);
+            enc.set_source_gamma(png::ScaledFloat::from_scaled(45455)); // 1.0 / 2.2, scaled by 100000
+            enc.set_source_gamma(png::ScaledFloat::new(1.0 / 2.2)); // 1.0 / 2.2, unscaled, but rounded
+            let source_chromaticities = png::SourceChromaticities::new(
+                // Using unscaled instantiation here
+                (0.31270, 0.32900),
+                (0.64000, 0.33000),
+                (0.30000, 0.60000),
+                (0.15000, 0.06000),
+            );
+            enc.set_source_chromaticities(source_chromaticities);
+            //
+
+            let mut writer = enc.write_header().unwrap();
+
+            let pixel_data = self.translate_bmp_to_rgba(i)?;
+
+            writer.write_image_data(&pixel_data).unwrap();
+        }
+        Ok(())
+    }
+
+    fn translate_bmp_to_rgba(&self, f: &Frame) -> Result<Vec<u8>, MCError> {
+        let mut rgba = Vec::<u8>::new();
+
+        for v in f.data {
+            for s in 0..2 {
+                let index = (v >> (4 * s as u8)) & 0x0f;
+                let pixel: u16 = self.title_frame.icon_palette[index as usize];
+                // format is argb
+                //
+                // push blue
+                rgba.push(((pixel & 0x000f) as u16) as u8 * 15);
+                // push green
+                rgba.push(((pixel & 0x00f0) as u16 >> 4) as u8 * 15);
+                // push red
+                rgba.push(((pixel & 0x0f00) as u16 >> 8) as u8 * 15);
+                // push alpha
+                rgba.push(((pixel & 0xf000) as u16 >> 12) as u8 * 15);
+            }
+        }
+
+        println!("{:?}", rgba);
+
+        Ok(rgba)
+    }
 }
 
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
@@ -273,7 +331,10 @@ impl MemCard {
                 break;
             }
         }
-        let _ = DataBlock::load_all_data_blocks(&blocks)?;
+        let db = DataBlock::load_all_data_blocks(&blocks)?;
+        for d in db {
+            d.export_images()?;
+        }
 
         Ok(())
     }
