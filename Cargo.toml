@@ -7,5 +7,6 @@ edition = "2021"
 
 [dependencies]
 deku = "0.13.1"
+gif = "0.11.4"
 png = "0.17.6"
 thiserror = "1.0.35"
