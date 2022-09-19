@@ -99,19 +99,30 @@ pub struct Block {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataBlock {
     title_frame: TitleFrame,
-    // len 3
+    // len 1-3
     icon_frames: Vec<Frame>,
+    data_frames: Vec<Frame>,
 }
 
 impl DataBlock {
     pub fn load_data_block(b: Block) -> Result<Self, MCError> {
+        // Read title frame
         let (_, title_frame) = TitleFrame::from_bytes((&b.data, 0))?;
 
-        let icon_frames = DataBlock::read_icon_frames(&b.data[FRAME..], title_frame.display)?;
+        // Read icon frame(s)
+        let num_frames = title_frame.display as usize & 0x03;
+        let icon_frames = DataBlock::read_n_frames(&b.data[FRAME..], num_frames)?;
+
+        // Read data frame
+        // title_frame len + (icon_frame len * num icon_frames)
+        let next = FRAME + (FRAME * icon_frames.len());
+        let num_frames = b.data[next..].len() / FRAME;
+        let data_frames = DataBlock::read_n_frames(&b.data[next..], num_frames)?;
 
         Ok(DataBlock {
             title_frame,
             icon_frames,
+            data_frames,
         })
     }
 
@@ -124,9 +135,8 @@ impl DataBlock {
         Ok(out)
     }
 
-    fn read_icon_frames(input: &[u8], display_flag: u8) -> Result<Vec<Frame>, MCError> {
+    fn read_n_frames(input: &[u8], num_frames: usize) -> Result<Vec<Frame>, MCError> {
         let mut frame = Vec::<Frame>::new();
-        let num_frames = display_flag as usize & 0x03;
         let (mut next, mut f) = Frame::from_bytes((input, 0))?;
         frame.push(f);
         loop {
@@ -139,9 +149,9 @@ impl DataBlock {
         Ok(frame)
     }
 
-    fn export_images(&self) -> Result<(), MCError> {
+    pub fn export_images(&self) -> Result<(), MCError> {
         for (n, i) in self.icon_frames.iter().enumerate() {
-            let filename = format!("{}_frame{}.png", self.title_frame.shift_jis_decode()?, n);
+            let filename = format!("{}_frame{}.png", self.title_frame.decode_title()?, n);
             let file = File::create(filename)?;
             let mut w = BufWriter::new(file);
             let mut enc = Encoder::new(&mut w, 16, 16);
@@ -194,7 +204,8 @@ pub struct TitleFrame {
 }
 
 impl TitleFrame {
-    fn shift_jis_decode(self) -> Result<String, MCError> {
+    pub fn decode_title(self) -> Result<String, MCError> {
+        // Shift JIS decode the Title
         let mut s = String::new();
 
         let mut p = 0;
@@ -232,7 +243,7 @@ impl TitleFrame {
 
 impl fmt::Display for TitleFrame {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let name = match self.shift_jis_decode() {
+        let name = match self.decode_title() {
             Ok(s) => s,
             Err(_) => "Unknown".to_string(),
         };
@@ -274,7 +285,11 @@ impl InfoBlock {
         // Read broken frames
         let broken_frames = BrokenFrame::load(&b.data[FRAME * 16..], 20)?;
 
-        Ok(InfoBlock{header, dir_frames, broken_frames})
+        Ok(InfoBlock {
+            header,
+            dir_frames,
+            broken_frames,
+        })
     }
 }
 
@@ -299,7 +314,7 @@ impl MemCard {
         }
         let data = DataBlock::load_all_data_blocks(&blocks)?;
 
-        Ok(MemCard{info, data})
+        Ok(MemCard { info, data })
     }
 }
 
