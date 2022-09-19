@@ -1,5 +1,6 @@
+use gif::EncodingError as GifEncodingError;
+use png::EncodingError;
 use std::io;
-use std::str::Utf8Error;
 
 use thiserror::Error;
 
@@ -11,8 +12,11 @@ pub enum MCError {
     #[error("IoError: {0}")]
     Io(#[from] io::Error),
 
-    #[error("Error in conversion of oct_to_dev")]
-    Utf8Error(#[from] Utf8Error),
+    #[error("Unable to encode to PNG")]
+    PngEncodingError(#[from] EncodingError),
+
+    #[error("Unable to encode to GIF")]
+    GifEncodingError(#[from] GifEncodingError),
 
     #[error("Checksum does not match expected value")]
     BadChecksum,

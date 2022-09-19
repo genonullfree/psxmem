@@ -91,6 +91,22 @@ pub struct Frame {
     data: [u8; FRAME],
 }
 
+impl Frame {
+    fn load(input: &[u8], n: usize) -> Result<Vec<Self>, MCError> {
+        let mut frame = Vec::<Self>::new();
+        let (mut next, mut df) = Self::from_bytes((input, 0))?;
+        frame.push(df);
+        loop {
+            if frame.len() == n {
+                break;
+            }
+            (next, df) = Self::from_bytes(next)?;
+            frame.push(df);
+        }
+        Ok(frame)
+    }
+}
+
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct Block {
@@ -150,7 +166,7 @@ impl DataBlock {
         Ok(frame)
     }
 
-    pub fn export_images(&self) -> Result<(), MCError> {
+    pub fn export_all_images(&self) -> Result<(), MCError> {
         // Extract out individual frames
         for (n, i) in self.icon_frames.iter().enumerate() {
             let filename = format!("{}_frame{}.png", self.title_frame.decode_title()?, n);
@@ -160,11 +176,11 @@ impl DataBlock {
             enc.set_color(png::ColorType::Rgba);
             enc.set_depth(png::BitDepth::Eight);
 
-            let mut writer = enc.write_header().unwrap();
+            let mut writer = enc.write_header()?;
 
             let pixel_data = self.translate_bmp_to_rgba(i)?;
 
-            writer.write_image_data(&pixel_data).unwrap();
+            writer.write_image_data(&pixel_data)?;
         }
 
         // If > 1 frame, extract it out as a gif too
@@ -180,12 +196,12 @@ impl DataBlock {
         let h = 16;
         let filename = format!("{}.gif", self.title_frame.decode_title()?);
         let mut file = File::create(filename)?;
-        let mut enc = GifEncoder::new(&mut file, w, h, &[]).unwrap();
-        enc.set_repeat(Repeat::Infinite).unwrap();
+        let mut enc = GifEncoder::new(&mut file, w, h, &[])?;
+        enc.set_repeat(Repeat::Infinite)?;
         for i in self.icon_frames.iter() {
             let mut pixels = self.translate_bmp_to_rgba(i)?;
             let gifframe = GifFrame::from_rgba(w, h, &mut *pixels);
-            enc.write_frame(&gifframe).unwrap();
+            enc.write_frame(&gifframe)?;
         }
 
         Ok(())
@@ -282,13 +298,13 @@ impl fmt::Display for TitleFrame {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InfoBlock {
     header: Header,
-    //#[deku(len = 15)]
+    //len = 15
     dir_frames: Vec<DirectoryFrame>,
-    //#[deku(len = 20)]
+    //len = 20
     broken_frames: Vec<BrokenFrame>,
-    //#[deku(len = frame*7)]
-    //unused_frames: Vec<Frame>,
-    //wr_test_frame: Header,
+    //len = 7
+    unused_frames: Vec<Frame>,
+    wr_test_frame: Header,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -307,12 +323,21 @@ impl InfoBlock {
         let dir_frames = DirectoryFrame::load(&b.data[FRAME..], 15)?;
 
         // Read broken frames
-        let broken_frames = BrokenFrame::load(&b.data[FRAME * 16..], 20)?;
+        let mut offset = dir_frames.len() * FRAME;
+        let broken_frames = BrokenFrame::load(&b.data[offset..], 20)?;
+
+        offset += broken_frames.len() * FRAME;
+        let unused_frames = Frame::load(&b.data[offset..], 7)?;
+
+        offset += unused_frames.len() * FRAME;
+        let (_, wr_test_frame) = Header::from_bytes((&b.data[offset..], 0))?;
 
         Ok(InfoBlock {
             header,
             dir_frames,
             broken_frames,
+            unused_frames,
+            wr_test_frame,
         })
     }
 }
@@ -326,7 +351,7 @@ impl MemCard {
         file.read_exact(&mut block0.data)?;
         let info = InfoBlock::open(block0)?;
 
-        // Load Data Blocks
+        // Read Data Blocks
         let mut blocks = Vec::<Block>::new();
         loop {
             let mut block = Block { data: [0u8; BLOCK] };
@@ -336,6 +361,8 @@ impl MemCard {
                 break;
             }
         }
+
+        // Load Data Blocks
         let data = DataBlock::load_all_data_blocks(&blocks)?;
 
         Ok(MemCard { info, data })
@@ -359,19 +386,9 @@ pub fn validate_checksum(d: &[u8]) -> Result<(), MCError> {
     Ok(())
 }
 
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
 
     #[test]
     fn memcard_open() {
@@ -379,7 +396,7 @@ mod tests {
 
         // Export images
         for d in m.data {
-            d.export_images().unwrap();
+            d.export_all_images().unwrap();
         }
     }
 }
