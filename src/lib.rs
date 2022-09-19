@@ -3,6 +3,7 @@ use std::io::{BufWriter, Read};
 use std::{fmt, str};
 
 use deku::prelude::*;
+use gif::{Encoder as GifEncoder, Frame as GifFrame, Repeat};
 use png::Encoder;
 
 mod errors;
@@ -150,6 +151,7 @@ impl DataBlock {
     }
 
     pub fn export_images(&self) -> Result<(), MCError> {
+        // Extract out individual frames
         for (n, i) in self.icon_frames.iter().enumerate() {
             let filename = format!("{}_frame{}.png", self.title_frame.decode_title()?, n);
             let file = File::create(filename)?;
@@ -164,6 +166,28 @@ impl DataBlock {
 
             writer.write_image_data(&pixel_data).unwrap();
         }
+
+        // If > 1 frame, extract it out as a gif too
+        if self.icon_frames.len() > 1 {
+            self.export_gif()?;
+        }
+
+        Ok(())
+    }
+
+    fn export_gif(&self) -> Result<(), MCError> {
+        let w = 16;
+        let h = 16;
+        let filename = format!("{}.gif", self.title_frame.decode_title()?);
+        let mut file = File::create(filename)?;
+        let mut enc = GifEncoder::new(&mut file, w, h, &[]).unwrap();
+        enc.set_repeat(Repeat::Infinite).unwrap();
+        for i in self.icon_frames.iter() {
+            let mut pixels = self.translate_bmp_to_rgba(i)?;
+            let gifframe = GifFrame::from_rgba(w, h, &mut *pixels);
+            enc.write_frame(&gifframe).unwrap();
+        }
+
         Ok(())
     }
 
