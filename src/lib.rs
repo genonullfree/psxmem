@@ -34,12 +34,15 @@ pub struct DirectoryFrame {
 impl DirectoryFrame {
     fn load(input: &[u8], n: usize) -> Result<Vec<Self>, MCError> {
         let mut frame = Vec::<Self>::new();
+        validate_checksum(input)?;
         let (mut next, mut df) = Self::from_bytes((input, 0))?;
         frame.push(df);
         loop {
             if frame.len() == n {
                 break;
             }
+            let (input, _) = next;
+            validate_checksum(input)?;
             (next, df) = Self::from_bytes(next)?;
             frame.push(df);
         }
@@ -72,12 +75,15 @@ pub struct BrokenFrame {
 impl BrokenFrame {
     fn load(input: &[u8], n: usize) -> Result<Vec<Self>, MCError> {
         let mut frame = Vec::<Self>::new();
+        validate_checksum(input)?;
         let (mut next, mut df) = Self::from_bytes((input, 0))?;
         frame.push(df);
         loop {
             if frame.len() == n {
                 break;
             }
+            let (input, _) = next;
+            validate_checksum(input)?;
             (next, df) = Self::from_bytes(next)?;
             frame.push(df);
         }
@@ -94,12 +100,15 @@ pub struct Frame {
 impl Frame {
     fn load(input: &[u8], n: usize) -> Result<Vec<Self>, MCError> {
         let mut frame = Vec::<Self>::new();
+        validate_checksum(input)?;
         let (mut next, mut df) = Self::from_bytes((input, 0))?;
         frame.push(df);
         loop {
             if frame.len() == n {
                 break;
             }
+            let (input, _) = next;
+            validate_checksum(input)?;
             (next, df) = Self::from_bytes(next)?;
             frame.push(df);
         }
@@ -164,6 +173,23 @@ impl DataBlock {
             frame.push(f);
         }
         Ok(frame)
+    }
+
+    pub fn write<T: std::io::Write>(&self, out: &mut T) -> Result<(), MCError> {
+        let t = self.title_frame.to_bytes()?;
+        out.write_all(&t)?;
+
+        for ic in &self.icon_frames {
+            let i = ic.to_bytes()?;
+            out.write_all(&i)?;
+        }
+
+        for df in &self.data_frames {
+            let d = df.to_bytes()?;
+            out.write_all(&d)?;
+        }
+
+        Ok(())
     }
 
     pub fn export_all_images(&self) -> Result<(), MCError> {
@@ -302,34 +328,29 @@ pub struct InfoBlock {
     dir_frames: Vec<DirectoryFrame>,
     //len = 20
     broken_frames: Vec<BrokenFrame>,
-    //len = 7
+    //len = 20
     unused_frames: Vec<Frame>,
     wr_test_frame: Header,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MemCard {
-    info: InfoBlock,
-    //#[deku(len = 15)]
-    data: Vec<DataBlock>,
-}
-
 impl InfoBlock {
     pub fn open(b: Block) -> Result<Self, MCError> {
-        //let header = Header::read(&mut reader)?;
+        // Validate and load header
+        validate_checksum(&b.data)?;
         let (_, header) = Header::from_bytes((&b.data, 0))?;
 
         // Read directory frames
         let dir_frames = DirectoryFrame::load(&b.data[FRAME..], 15)?;
 
         // Read broken frames
-        let mut offset = dir_frames.len() * FRAME;
+        let mut offset = (dir_frames.len() * FRAME) + FRAME;
         let broken_frames = BrokenFrame::load(&b.data[offset..], 20)?;
 
         offset += broken_frames.len() * FRAME;
-        let unused_frames = Frame::load(&b.data[offset..], 7)?;
+        let unused_frames = Frame::load(&b.data[offset..], 27)?;
 
         offset += unused_frames.len() * FRAME;
+        validate_checksum(&b.data[offset..])?;
         let (_, wr_test_frame) = Header::from_bytes((&b.data[offset..], 0))?;
 
         Ok(InfoBlock {
@@ -340,6 +361,38 @@ impl InfoBlock {
             wr_test_frame,
         })
     }
+
+    pub fn write<T: std::io::Write>(&self, out: &mut T) -> Result<(), MCError> {
+        let mut h = self.header.to_bytes()?;
+        out.write_all(update_checksum(&mut h)?)?;
+
+        for df in &self.dir_frames {
+            let mut d = df.to_bytes()?;
+            out.write_all(update_checksum(&mut d)?)?;
+        }
+
+        for bf in &self.broken_frames {
+            let mut b = bf.to_bytes()?;
+            out.write_all(update_checksum(&mut b)?)?;
+        }
+
+        for uf in &self.unused_frames {
+            let mut f = uf.to_bytes()?;
+            out.write_all(update_checksum(&mut f)?)?;
+        }
+
+        let mut wrt = self.wr_test_frame.to_bytes()?;
+        out.write_all(update_checksum(&mut wrt)?)?;
+
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemCard {
+    info: InfoBlock,
+    //#[deku(len = 15)]
+    data: Vec<DataBlock>,
 }
 
 impl MemCard {
@@ -367,6 +420,17 @@ impl MemCard {
 
         Ok(MemCard { info, data })
     }
+
+    pub fn write(&self, filename: String) -> Result<(), MCError> {
+        let mut file = File::create(&filename)?;
+
+        self.info.write(&mut file)?;
+        for d in &self.data {
+            d.write(&mut file)?;
+        }
+
+        Ok(())
+    }
 }
 
 pub fn calc_checksum(d: &[u8]) -> u8 {
@@ -386,17 +450,50 @@ pub fn validate_checksum(d: &[u8]) -> Result<(), MCError> {
     Ok(())
 }
 
+pub fn update_checksum(d: &mut [u8]) -> Result<&[u8], MCError> {
+    let c = calc_checksum(d);
+    d[FRAME - 1] = c;
+
+    validate_checksum(d)?;
+
+    Ok(d)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn memcard_open() {
-        let m = MemCard::open("epsxe000.mcr".to_string()).unwrap();
+        let _ = MemCard::open("epsxe000.mcr".to_string()).unwrap();
 
+        /*
         // Export images
         for d in m.data {
             d.export_all_images().unwrap();
         }
+        */
+    }
+
+    #[test]
+    fn memcard_write() {
+        let m = MemCard::open("epsxe000.mcr".to_string()).unwrap();
+
+        m.write("test.mcr".to_string()).unwrap();
+    }
+
+    #[test]
+    fn memcard_modify() {
+        let mut a = MemCard::open("epsxe000.mcr".to_string()).unwrap();
+        a.info.header.id = [0x11, 0x22];
+        a.write("test.mcr".to_string()).unwrap();
+
+        let mut b = MemCard::open("test.mcr".to_string()).unwrap();
+        b.info.dir_frames[0].filesize = 4000000;
+        b.write("test.mcr".to_string()).unwrap();
+
+        let mut c = MemCard::open("test.mcr".to_string()).unwrap();
+        c.info.broken_frames[0].broken_frame = 12345;
+        c.write("test.mcr".to_string()).unwrap();
     }
 }
