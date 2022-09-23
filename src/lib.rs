@@ -521,6 +521,44 @@ impl MemCard {
 
         Ok(())
     }
+
+    pub fn find_game(&self, search: &str) -> Result<Vec<DataBlock>, MCError> {
+        let mut idxs = Vec::<usize>::new();
+        let mut found = Vec::<DataBlock>::new();
+        let mut needle = String::from(search);
+        needle.make_ascii_lowercase();
+
+        // Find names that match in the info block
+        for (num, info) in self.info.dir_frames.iter().enumerate() {
+            let i = info.get_region_info()?;
+            let mut haystack = String::from(&i.name);
+            haystack.make_ascii_lowercase();
+
+            if haystack.contains(&needle) {
+                if !idxs.contains(&num) {
+                    idxs.push(num);
+                }
+            }
+        }
+
+        // Find names that match in the data blocks
+        for (num, info) in self.data.iter().enumerate() {
+            let mut haystack = String::from(info.title_frame.decode_title()?);
+            haystack.make_ascii_lowercase();
+
+            if haystack.contains(&needle) {
+                if !idxs.contains(&num) {
+                    idxs.push(num);
+                }
+            }
+        }
+
+        for i in idxs {
+            found.push(self.data[i].clone());
+        }
+
+        Ok(found)
+    }
 }
 
 pub fn calc_checksum(d: &[u8]) -> u8 {
@@ -569,8 +607,9 @@ mod tests {
     fn memcard_write() {
         let m = MemCard::open("epsxe000.mcr".to_string()).unwrap();
 
-        for t in &m.data {
-            println!("{}", t.title_frame);
+        let w = m.find_game("WILD").unwrap();
+        for i in w {
+            println!("{}", i.title_frame);
         }
 
         m.write("test.mcr".to_string()).unwrap();
