@@ -329,6 +329,14 @@ impl DataBlock {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IconDisplay {
+    OneFrame,
+    TwoFrames,
+    ThreeFrames,
+    UNKNOWNFrames,
+}
+
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct TitleFrame {
@@ -376,6 +384,15 @@ impl TitleFrame {
 
         Ok(s)
     }
+
+    fn get_icon_display(&self) -> IconDisplay {
+        match self.display {
+            0x11 => IconDisplay::OneFrame,
+            0x12 => IconDisplay::TwoFrames,
+            0x13 => IconDisplay::ThreeFrames,
+            _ => IconDisplay::UNKNOWNFrames,
+        }
+    }
 }
 
 impl fmt::Display for TitleFrame {
@@ -386,8 +403,10 @@ impl fmt::Display for TitleFrame {
         };
         write!(
             f,
-            "\n Display: {}\n Block Number: {}\n Filename: {}\nIcon Palette: {:02x?}",
-            self.display, self.block_num, name, self.icon_palette
+            "\n Filename: {}\n Icon: {:?}\n Block Number: {}",
+            name,
+            self.get_icon_display(),
+            self.block_num
         )
     }
 }
@@ -549,6 +568,10 @@ mod tests {
     #[test]
     fn memcard_write() {
         let m = MemCard::open("epsxe000.mcr".to_string()).unwrap();
+
+        for t in &m.data {
+            println!("{}", t.title_frame);
+        }
 
         m.write("test.mcr".to_string()).unwrap();
     }
