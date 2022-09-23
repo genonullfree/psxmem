@@ -20,6 +20,19 @@ pub struct Header {
     checksum: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum BAState {
+    AllocFirst = 0x51,
+    AllocMid = 0x52,
+    AllocLast = 0x53,
+    Free = 0xa0,
+    FreeFirst = 0xa1,
+    FreeMid = 0xa2,
+    FreeLast = 0xa3,
+    UNKNOWN,
+}
+
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct DirectoryFrame {
@@ -29,6 +42,28 @@ pub struct DirectoryFrame {
     filename: [u8; 21],
     pad: [u8; 96],
     checksum: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Region {
+    Japan,
+    America,
+    Europe,
+    UNKNOWN,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum License {
+    Sony,
+    Licensed,
+    UNKNOWN,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegionInfo {
+    region: Region,
+    license: License,
+    name: String,
 }
 
 impl DirectoryFrame {
@@ -48,18 +83,54 @@ impl DirectoryFrame {
         }
         Ok(frame)
     }
+
+    fn get_alloc_state(&self) -> BAState {
+        match self.state {
+            0x51 => BAState::AllocFirst,
+            0x52 => BAState::AllocMid,
+            0x53 => BAState::AllocLast,
+            0xa0 => BAState::Free,
+            0xa1 => BAState::FreeFirst,
+            0xa2 => BAState::FreeMid,
+            0xa3 => BAState::FreeLast,
+            _ => BAState::UNKNOWN,
+        }
+    }
+
+    fn get_region_info(&self) -> Result<RegionInfo, MCError> {
+        let region = match self.filename[1] {
+            b'I' => Region::Japan,
+            b'A' => Region::America,
+            b'E' => Region::Europe,
+            _ => Region::UNKNOWN,
+        };
+
+        let license = match self.filename[3] {
+            b'C' => License::Sony,
+            b'L' => License::Licensed,
+            _ => License::UNKNOWN,
+        };
+
+        let name = str::from_utf8(&self.filename[12..])?.to_string();
+
+        Ok(RegionInfo {
+            region,
+            license,
+            name,
+        })
+    }
 }
 
 impl fmt::Display for DirectoryFrame {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let name = match str::from_utf8(&self.filename) {
-            Ok(s) => s.to_string(),
-            Err(_) => "Unknown".to_string(),
-        };
         write!(
             f,
-            "\n State: {}\n Filesize: {}\n Next block: {}\n Filename: {}\n Checksum: {}",
-            self.state, self.filesize, self.next_block, name, self.checksum
+            "\n State: {:?}\n Filesize: {}\n Next block: {}\n Region Info: {:?}\n Checksum: {}",
+            self.get_alloc_state(),
+            self.filesize,
+            self.next_block,
+            self.get_region_info(),
+            self.checksum
         )
     }
 }
