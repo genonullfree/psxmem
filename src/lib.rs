@@ -1,3 +1,8 @@
+//! # PSXmem
+//!
+//! `psxmem` is a library that can be used to read in and parse raw PSX/PS1 memory card dumps
+//! including raw *.mcr formats that some emulators use.
+
 use std::fs::File;
 use std::io::{BufWriter, Read};
 use std::{fmt, str};
@@ -20,15 +25,50 @@ pub struct Header {
     checksum: u8,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum BAState {
+    AllocFirst = 0x51,
+    AllocMid = 0x52,
+    AllocLast = 0x53,
+    Free = 0xa0,
+    FreeFirst = 0xa1,
+    FreeMid = 0xa2,
+    FreeLast = 0xa3,
+    UNKNOWN,
+}
+
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct DirectoryFrame {
-    state: u32,
-    filesize: u32,
-    next_block: u16,
-    filename: [u8; 21],
-    pad: [u8; 96],
-    checksum: u8,
+    pub state: u32,
+    pub filesize: u32,
+    pub next_block: u16,
+    pub filename: [u8; 21],
+    pub pad: [u8; 96],
+    pub checksum: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Region {
+    Japan,
+    America,
+    Europe,
+    UNKNOWN,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum License {
+    Sony,
+    Licensed,
+    UNKNOWN,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RegionInfo {
+    pub region: Region,
+    pub license: License,
+    pub name: String,
 }
 
 impl DirectoryFrame {
@@ -48,18 +88,54 @@ impl DirectoryFrame {
         }
         Ok(frame)
     }
+
+    fn get_alloc_state(&self) -> BAState {
+        match self.state {
+            0x51 => BAState::AllocFirst,
+            0x52 => BAState::AllocMid,
+            0x53 => BAState::AllocLast,
+            0xa0 => BAState::Free,
+            0xa1 => BAState::FreeFirst,
+            0xa2 => BAState::FreeMid,
+            0xa3 => BAState::FreeLast,
+            _ => BAState::UNKNOWN,
+        }
+    }
+
+    fn get_region_info(&self) -> Result<RegionInfo, MCError> {
+        let region = match self.filename[1] {
+            b'I' => Region::Japan,
+            b'A' => Region::America,
+            b'E' => Region::Europe,
+            _ => Region::UNKNOWN,
+        };
+
+        let license = match self.filename[3] {
+            b'C' => License::Sony,
+            b'L' => License::Licensed,
+            _ => License::UNKNOWN,
+        };
+
+        let name = str::from_utf8(&self.filename[12..])?.to_string();
+
+        Ok(RegionInfo {
+            region,
+            license,
+            name,
+        })
+    }
 }
 
 impl fmt::Display for DirectoryFrame {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let name = match str::from_utf8(&self.filename) {
-            Ok(s) => s.to_string(),
-            Err(_) => "Unknown".to_string(),
-        };
         write!(
             f,
-            "\n State: {}\n Filesize: {}\n Next block: {}\n Filename: {}\n Checksum: {}",
-            self.state, self.filesize, self.next_block, name, self.checksum
+            "\n State: {:?}\n Filesize: {}\n Next block: {}\n Region Info: {:?}\n Checksum: {}",
+            self.get_alloc_state(),
+            self.filesize,
+            self.next_block,
+            self.get_region_info(),
+            self.checksum
         )
     }
 }
@@ -91,14 +167,21 @@ impl BrokenFrame {
     }
 }
 
+/// Frame
+///
+/// A `Frame` is 128 bytes of data. Typically the final byte of data is a checksum, but several
+/// `Frame` types do not follow that convention.
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct Frame {
-    data: [u8; FRAME],
+    /// The data contained in the `Frame`.
+    pub data: [u8; FRAME],
 }
 
 impl Frame {
-    fn load(input: &[u8], n: usize) -> Result<Vec<Self>, MCError> {
+    /// `load` will read in `n` x `Frame`s worth of data and return a `Result` of a `Vec<Frame>`
+    /// and will also validate the checksum of the frames.
+    pub fn load(input: &[u8], n: usize) -> Result<Vec<Self>, MCError> {
         let mut frame = Vec::<Self>::new();
         validate_checksum(input)?;
         let (mut next, mut df) = Self::from_bytes((input, 0))?;
@@ -116,21 +199,34 @@ impl Frame {
     }
 }
 
+/// Block
+///
+/// A `Block` is 8KB of data, or 64 `Frame`s.
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct Block {
-    data: [u8; BLOCK],
+    /// The data contained in the `Block`.
+    pub data: [u8; BLOCK],
 }
 
+/// DataBlock
+///
+/// A `DataBlock` is a `Block` that is a game save block.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DataBlock {
-    title_frame: TitleFrame,
-    // len 1-3
-    icon_frames: Vec<Frame>,
-    data_frames: Vec<Frame>,
+    /// The frame that contains the Title information.
+    pub title_frame: TitleFrame,
+    /// The frame(s) that contain the Icon information. This is the static or animated
+    /// image that is displayed when viewing the memory card management. There can be
+    /// 1 to 3 frames per save file.
+    pub icon_frames: Vec<Frame>,
+
+    /// The actual save data is stored here.
+    pub data_frames: Vec<Frame>,
 }
 
 impl DataBlock {
+    /// Parse a raw `Block` into a `DataBlock`.
     pub fn load_data_block(b: Block) -> Result<Self, MCError> {
         // Read title frame
         let (_, title_frame) = TitleFrame::from_bytes((&b.data, 0))?;
@@ -152,6 +248,7 @@ impl DataBlock {
         })
     }
 
+    /// Parse all `Block`s into `DataBlock`s.
     pub fn load_all_data_blocks(v: &[Block]) -> Result<Vec<Self>, MCError> {
         let mut out = Vec::<Self>::new();
         for i in v {
@@ -175,6 +272,7 @@ impl DataBlock {
         Ok(frame)
     }
 
+    /// Write all `DataBlock` data to `out`.
     pub fn write<T: std::io::Write>(&self, out: &mut T) -> Result<(), MCError> {
         let t = self.title_frame.to_bytes()?;
         out.write_all(&t)?;
@@ -192,6 +290,8 @@ impl DataBlock {
         Ok(())
     }
 
+    /// Export all image frames to separate `.png` image files. If there are more than 1 frames,
+    /// then also export them as a combined `.gif`.
     pub fn export_all_images(&self) -> Result<(), MCError> {
         // Extract out individual frames
         for (n, i) in self.icon_frames.iter().enumerate() {
@@ -258,18 +358,31 @@ impl DataBlock {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IconDisplay {
+    OneFrame,
+    TwoFrames,
+    ThreeFrames,
+    UNKNOWNFrames,
+}
+
+/// TitleFrame
+///
+/// The `TitleFrame` contains the Title of the game save file, as well as other info on
+/// how many frames are in the image, as well as block number and the icon palette.
 #[derive(Clone, Copy, Debug, DekuRead, DekuWrite, PartialEq, Eq)]
 #[deku(endian = "little")]
 pub struct TitleFrame {
-    id: [u8; 2],
-    display: u8,
-    block_num: u8,
-    title: [u8; 64],
-    reserved: [u8; 28],
-    icon_palette: [u16; 16],
+    pub id: [u8; 2],
+    pub display: u8,
+    pub block_num: u8,
+    pub title: [u8; 64],
+    pub reserved: [u8; 28],
+    pub icon_palette: [u16; 16],
 }
 
 impl TitleFrame {
+    /// Decode the Title from Shift-JIS into ASCII
     pub fn decode_title(self) -> Result<String, MCError> {
         // Shift JIS decode the Title
         let mut s = String::new();
@@ -305,6 +418,15 @@ impl TitleFrame {
 
         Ok(s)
     }
+
+    fn get_icon_display(&self) -> IconDisplay {
+        match self.display {
+            0x11 => IconDisplay::OneFrame,
+            0x12 => IconDisplay::TwoFrames,
+            0x13 => IconDisplay::ThreeFrames,
+            _ => IconDisplay::UNKNOWNFrames,
+        }
+    }
 }
 
 impl fmt::Display for TitleFrame {
@@ -315,25 +437,36 @@ impl fmt::Display for TitleFrame {
         };
         write!(
             f,
-            "\n Display: {}\n Block Number: {}\n Filename: {}\nIcon Palette: {:02x?}",
-            self.display, self.block_num, name, self.icon_palette
+            "\n Filename: {}\n Icon: {:?}\n Block Number: {}",
+            name,
+            self.get_icon_display(),
+            self.block_num
         )
     }
 }
 
+/// InfoBlock
+///
+/// The `InfoBlock` is the first block in the memory card and contains the directory info
+/// for the locations of all the data / save file blocks, as well as any broken frame info.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InfoBlock {
-    header: Header,
-    //len = 15
-    dir_frames: Vec<DirectoryFrame>,
-    //len = 20
-    broken_frames: Vec<BrokenFrame>,
-    //len = 20
+    /// The header info that identifies this as PSX/PS1 memory card data.
+    pub header: Header,
+
+    /// The directory `Frame`s that detail the save file info and `Block` locations. There are
+    /// 15 `dir_frames`.
+    pub dir_frames: Vec<DirectoryFrame>,
+
+    /// The broken frames identify bad `Frame`s in the memory card. There are 20 `broken_frames`.
+    pub broken_frames: Vec<BrokenFrame>,
+
     unused_frames: Vec<Frame>,
     wr_test_frame: Header,
 }
 
 impl InfoBlock {
+    /// Open and parse the first block of the memory card.
     pub fn open(b: Block) -> Result<Self, MCError> {
         // Validate and load header
         validate_checksum(&b.data)?;
@@ -362,6 +495,7 @@ impl InfoBlock {
         })
     }
 
+    /// Write the contents of the `InfoBlock` to `out`.
     pub fn write<T: std::io::Write>(&self, out: &mut T) -> Result<(), MCError> {
         let mut h = self.header.to_bytes()?;
         out.write_all(update_checksum(&mut h)?)?;
@@ -388,14 +522,22 @@ impl InfoBlock {
     }
 }
 
+/// #MemCard
+///
+/// The entire contents of the memory card are loaded into a `MemCard` struct. From here
+/// the data can be manipulated and written back out.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemCard {
-    info: InfoBlock,
-    //#[deku(len = 15)]
-    data: Vec<DataBlock>,
+    /// The initial block of data on the memory card.
+    pub info: InfoBlock,
+
+    /// The save data blocks on the memory card.
+    pub data: Vec<DataBlock>,
 }
 
 impl MemCard {
+    /// Open and parse the memory card file from a filename. Load the data into a `MemCard`
+    /// structure.
     pub fn open(filename: String) -> Result<Self, MCError> {
         let mut file = File::open(&filename)?;
 
@@ -421,6 +563,7 @@ impl MemCard {
         Ok(MemCard { info, data })
     }
 
+    /// Write out the `MemCard` data to a file.
     pub fn write(&self, filename: String) -> Result<(), MCError> {
         let mut file = File::create(&filename)?;
 
@@ -431,8 +574,29 @@ impl MemCard {
 
         Ok(())
     }
+
+    /// Search for a game save block that matches the `search` term. The search is case
+    /// insensitive.
+    pub fn find_game(&self, search: &str) -> Result<Vec<DataBlock>, MCError> {
+        let mut found = Vec::<DataBlock>::new();
+        let mut needle = String::from(search);
+        needle.make_ascii_lowercase();
+
+        // Find names that match in the data blocks
+        for info in &self.data {
+            let mut haystack = info.title_frame.decode_title()?;
+            haystack.make_ascii_lowercase();
+
+            if haystack.contains(&needle) {
+                found.push(info.clone());
+            }
+        }
+
+        Ok(found)
+    }
 }
 
+/// Calculate the `Frame` checksum.
 pub fn calc_checksum(d: &[u8]) -> u8 {
     let mut c = 0;
     for i in d.iter().take(FRAME - 1) {
@@ -441,6 +605,7 @@ pub fn calc_checksum(d: &[u8]) -> u8 {
     c
 }
 
+/// Calculate the `Frame` checksum and validate that it matches the expected value.
 pub fn validate_checksum(d: &[u8]) -> Result<(), MCError> {
     let c = calc_checksum(d);
     if c != d[FRAME - 1] {
@@ -450,6 +615,7 @@ pub fn validate_checksum(d: &[u8]) -> Result<(), MCError> {
     Ok(())
 }
 
+/// Update the `Frame` checksum after making edits.
 pub fn update_checksum(d: &mut [u8]) -> Result<&[u8], MCError> {
     let c = calc_checksum(d);
     d[FRAME - 1] = c;
@@ -478,6 +644,11 @@ mod tests {
     #[test]
     fn memcard_write() {
         let m = MemCard::open("epsxe000.mcr".to_string()).unwrap();
+
+        let w = m.find_game("WILD").unwrap();
+        for i in w {
+            println!("{}", i.title_frame);
+        }
 
         m.write("test.mcr".to_string()).unwrap();
     }
