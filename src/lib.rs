@@ -12,7 +12,7 @@ use gif::{Encoder as GifEncoder, Frame as GifFrame, Repeat};
 use png::Encoder;
 
 mod errors;
-use crate::errors::MCError;
+pub use crate::errors::MCError;
 
 const BLOCK: usize = 0x2000;
 const FRAME: usize = 0x80;
@@ -538,7 +538,7 @@ pub struct MemCard {
 impl MemCard {
     /// Open and parse the memory card file from a filename. Load the data into a `MemCard`
     /// structure.
-    pub fn open(filename: String) -> Result<Self, MCError> {
+    pub fn open(filename: &str) -> Result<Self, MCError> {
         let mut file = File::open(&filename)?;
 
         // Load Info Block
@@ -564,7 +564,7 @@ impl MemCard {
     }
 
     /// Write out the `MemCard` data to a file.
-    pub fn write(&self, filename: String) -> Result<(), MCError> {
+    pub fn write(&self, filename: &str) -> Result<(), MCError> {
         let mut file = File::create(&filename)?;
 
         self.info.write(&mut file)?;
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn memcard_open() {
-        let _ = MemCard::open("epsxe000.mcr".to_string()).unwrap();
+        let _ = MemCard::open("epsxe000.mcr").unwrap();
 
         /*
         // Export images
@@ -643,28 +643,28 @@ mod tests {
 
     #[test]
     fn memcard_write() {
-        let m = MemCard::open("epsxe000.mcr".to_string()).unwrap();
+        let m = MemCard::open("epsxe000.mcr").unwrap();
 
         let w = m.find_game("WILD").unwrap();
         for i in w {
             println!("{}", i.title_frame);
         }
 
-        m.write("test.mcr".to_string()).unwrap();
+        m.write("test.mcr").unwrap();
     }
 
     #[test]
     fn memcard_modify() {
-        let mut a = MemCard::open("epsxe000.mcr".to_string()).unwrap();
+        let mut a = MemCard::open("epsxe000.mcr").unwrap();
         a.info.header.id = [0x11, 0x22];
-        a.write("test.mcr".to_string()).unwrap();
+        a.write("test.mcr").unwrap();
 
-        let mut b = MemCard::open("test.mcr".to_string()).unwrap();
+        let mut b = MemCard::open("test.mcr").unwrap();
         b.info.dir_frames[0].filesize = 4000000;
-        b.write("test.mcr".to_string()).unwrap();
+        b.write("test.mcr").unwrap();
 
-        let mut c = MemCard::open("test.mcr".to_string()).unwrap();
+        let mut c = MemCard::open("test.mcr").unwrap();
         c.info.broken_frames[0].broken_frame = 12345;
-        c.write("test.mcr".to_string()).unwrap();
+        c.write("test.mcr").unwrap();
     }
 }
