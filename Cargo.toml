@@ -1,6 +1,6 @@
 [package]
 name = "psxmem"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["geno nullfree <nullfree.geno@gmail.com>"]
 license = "BSD-3-Clause"
 description = "This is a library to read and write PSX/PS1 memory card files."
@@ -12,6 +12,7 @@ categories = ["filesystem", "data-structures"]
 edition = "2021"
 
 [dependencies]
+byteorder = "1.4.3"
 deku = "0.13.1"
 gif = "0.11.4"
 png = "0.17.6"

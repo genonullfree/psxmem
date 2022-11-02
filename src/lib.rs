@@ -4,9 +4,10 @@
 //! including raw *.mcr formats that some emulators use.
 
 use std::fs::File;
-use std::io::{BufWriter, Read};
+use std::io::{BufWriter, Read, Write};
 use std::{fmt, str};
 
+use byteorder::{LittleEndian, ReadBytesExt};
 use deku::prelude::*;
 use gif::{Encoder as GifEncoder, Frame as GifFrame, Repeat};
 use png::Encoder;
@@ -196,6 +197,69 @@ impl Frame {
             frame.push(df);
         }
         Ok(frame)
+    }
+
+    pub fn print_strings(f: &Frame) {
+        let mut s = String::new();
+
+        for i in f.data {
+            if i.is_ascii_graphic() || i == b' ' {
+                s.push(i as char);
+                continue;
+            } else if i == 0 && s.len() > 1 {
+                println!("{}", s.trim_start());
+            }
+            s.clear();
+        }
+        if !s.is_empty() {
+            println!("{}", s.trim_start());
+        }
+    }
+
+    pub fn print_values(f: &Frame) {
+        let mut buf: &[u8] = &f.data;
+        let mut count = 0;
+        while let Ok(v) = buf.read_u16::<LittleEndian>() {
+            if v != 0 {
+                println!("{:02}) Hex: {:04x} Dec: {}", count, v, v);
+            }
+            count += 1;
+        };
+    }
+
+    pub fn print_hex(f: &Frame) {
+        let mut s = String::new();
+        for (e, i) in f.data.iter().enumerate() {
+            if e > 0 {
+                if e % 16 == 0 {
+                    println!(" {}", s);
+                    s.clear();
+                } else if e % 2 == 0 {
+                    print!(" |");
+                }
+            }
+            print!(" {:02x}", i);
+            if i.is_ascii_graphic() {
+                s.push(*i as char);
+            } else {
+                s.push('.');
+            }
+        }
+        println!(" {}", s);
+    }
+
+    pub fn set_u32_at(f: &mut Frame, v: u32, ofs: usize) -> Result<(), MCError> {
+        let mut idx = &mut f.data[ofs..];
+        idx.write_all(v.to_le_bytes().as_ref())?;
+
+        Ok(())
+    }
+
+    pub fn set_u16_at(f: &mut Frame, v: u16, ofs: usize) -> Result<(), MCError> {
+        let mut idx = &mut f.data[ofs..];
+        idx.write_all(v.to_le_bytes().as_ref())?;
+
+        Ok(())
     }
 }
 
