@@ -12,8 +12,8 @@ categories = ["filesystem", "data-structures"]
 edition = "2021"
 
 [dependencies]
-byteorder = "1.4.3"
-deku = "0.13.1"
-gif = "0.11.4"
-png = "0.17.6"
-thiserror = "1.0.35"
+byteorder = "1.5.0"
+deku = "0.16.0"
+gif = "0.13.1"
+png = "0.17.13"
+thiserror = "1.0.59"
